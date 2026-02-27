@@ -334,13 +334,59 @@
                 sheet[address] = base;
             };
 
-            try {
-                const templateResponse = await fetch('./Libro1.xlsx');
-                if (!templateResponse.ok) {
-                    throw new Error('No se pudo cargar la plantilla Libro1.xlsx');
+            const loadTemplateArrayBuffer = async () => {
+                if (window.location.protocol !== 'file:') {
+                    try {
+                        const response = await fetch('./Libro1.xlsx');
+                        if (response.ok) {
+                            return await response.arrayBuffer();
+                        }
+                    } catch (error) {
+                        console.warn('No se pudo cargar automáticamente Libro1.xlsx, se solicitará seleccionar la plantilla.', error);
+                    }
                 }
 
-                const arrayBuffer = await templateResponse.arrayBuffer();
+                if (window.showOpenFilePicker) {
+                    const [fileHandle] = await window.showOpenFilePicker({
+                        multiple: false,
+                        types: [{
+                            description: 'Plantilla Excel',
+                            accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+                        }],
+                        excludeAcceptAllOption: false
+                    });
+                    const file = await fileHandle.getFile();
+                    return await file.arrayBuffer();
+                }
+
+                return await new Promise((resolve, reject) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.xlsx';
+                    input.style.display = 'none';
+
+                    input.onchange = async (event) => {
+                        const file = event.target.files?.[0];
+                        document.body.removeChild(input);
+                        if (!file) {
+                            reject(new Error('No se seleccionó una plantilla XLSX'));
+                            return;
+                        }
+                        resolve(await file.arrayBuffer());
+                    };
+
+                    input.onerror = () => {
+                        document.body.removeChild(input);
+                        reject(new Error('No se pudo abrir el selector de archivos'));
+                    };
+
+                    document.body.appendChild(input);
+                    input.click();
+                });
+            };
+
+            try {
+                const arrayBuffer = await loadTemplateArrayBuffer();
                 const workbook = XLSX.read(arrayBuffer, { type: 'array', cellStyles: true, cellNF: true });
                 const worksheet = workbook.Sheets[workbook.SheetNames[0]];
 
@@ -422,7 +468,7 @@
                 XLSX.writeFile(workbook, `Precios Productos Luna - ${formattedDate}.xlsx`);
             } catch (error) {
                 console.error('Error al exportar Excel:', error);
-                alert('Error al exportar Excel usando Libro1.xlsx. Verifica que el archivo esté junto al index.html');
+                alert('Error al exportar Excel. En modo offline (file://) debes seleccionar Libro1.xlsx manualmente.');
             }
         }
 
