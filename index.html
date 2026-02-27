@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gestor de Precios Luna</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
@@ -323,18 +323,8 @@
 
             const rate = parseFloat(document.getElementById('exchangeRate').value) || 0;
 
-            const cloneCell = (cell) => (cell ? JSON.parse(JSON.stringify(cell)) : null);
-            const getCell = (sheet, col, row) => sheet[`${col}${row}`];
-            const setStyledValue = (sheet, col, row, value, type, fallbackCell) => {
-                const address = `${col}${row}`;
-                const base = cloneCell(sheet[address]) || cloneCell(fallbackCell) || { t: type };
-                base.v = value;
-                base.t = type;
-                delete base.w;
-                sheet[address] = base;
-            };
-
             const loadTemplateArrayBuffer = async () => {
+                // Intentar cargar desde la carpeta del proyecto
                 if (window.location.protocol !== 'file:') {
                     try {
                         const response = await fetch('./Libro1.xlsx');
@@ -342,23 +332,29 @@
                             return await response.arrayBuffer();
                         }
                     } catch (error) {
-                        console.warn('No se pudo cargar automáticamente Libro1.xlsx, se solicitará seleccionar la plantilla.', error);
+                        console.warn('No se pudo cargar automáticamente Libro1.xlsx');
                     }
                 }
 
+                // Si estamos en modo offline (file://), intentar con File Picker API
                 if (window.showOpenFilePicker) {
-                    const [fileHandle] = await window.showOpenFilePicker({
-                        multiple: false,
-                        types: [{
-                            description: 'Plantilla Excel',
-                            accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
-                        }],
-                        excludeAcceptAllOption: false
-                    });
-                    const file = await fileHandle.getFile();
-                    return await file.arrayBuffer();
+                    try {
+                        const [fileHandle] = await window.showOpenFilePicker({
+                            multiple: false,
+                            types: [{
+                                description: 'Plantilla Excel',
+                                accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+                            }],
+                            excludeAcceptAllOption: false
+                        });
+                        const file = await fileHandle.getFile();
+                        return await file.arrayBuffer();
+                    } catch (e) {
+                        console.warn('No se pudo usar File Picker API');
+                    }
                 }
 
+                // Fallback: selector de archivos tradicional
                 return await new Promise((resolve, reject) => {
                     const input = document.createElement('input');
                     input.type = 'file';
@@ -367,7 +363,7 @@
 
                     input.onchange = async (event) => {
                         const file = event.target.files?.[0];
-                        document.body.removeChild(input);
+                        if (input.parentNode) document.body.removeChild(input);
                         if (!file) {
                             reject(new Error('No se seleccionó una plantilla XLSX'));
                             return;
@@ -376,7 +372,7 @@
                     };
 
                     input.onerror = () => {
-                        document.body.removeChild(input);
+                        if (input.parentNode) document.body.removeChild(input);
                         reject(new Error('No se pudo abrir el selector de archivos'));
                     };
 
@@ -387,88 +383,129 @@
 
             try {
                 const arrayBuffer = await loadTemplateArrayBuffer();
-                const workbook = XLSX.read(arrayBuffer, { type: 'array', cellStyles: true, cellNF: true });
-                const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-
+                
+                // Usar ExcelJS para leer y manipular manteniendo todos los estilos
+                const workbook = new ExcelJS.Workbook();
+                await workbook.xlsx.load(arrayBuffer);
+                
+                const worksheet = workbook.worksheets[0];
                 const today = new Date();
-                const excelDate = Math.floor((today - new Date(1899, 11, 30)) / (24 * 60 * 60 * 1000));
 
-                if (worksheet['A1']) {
-                    worksheet['A1'].v = excelDate;
-                    worksheet['A1'].t = 'n';
-                    delete worksheet['A1'].w;
+                // Actualizar fecha en A1
+                if (worksheet.getCell('A1')) {
+                    worksheet.getCell('A1').value = today;
                 }
 
-                const startRow = 4;
-                let markerRow = startRow;
+                // Encontrar la fila CAMBIO
+                let markerRow = 4;
                 const maxSearchRows = 5000;
-
+                
                 while (markerRow < maxSearchRows) {
-                    const markerValue = getCell(worksheet, 'A', markerRow)?.v;
-                    if (markerValue === 'CAMBIO' || markerValue === 'TOQUE') {
+                    const cellValue = worksheet.getCell(`A${markerRow}`).value;
+                    if (cellValue === 'CAMBIO' || cellValue === 'TOQUE') {
                         break;
                     }
                     markerRow++;
                 }
 
                 if (markerRow === maxSearchRows) {
-                    throw new Error('No se encontró la fila CAMBIO/TOQUE en la plantilla');
+                    throw new Error('No se encontró marcador CAMBIO en la plantilla');
                 }
 
-                const productStyleRow = startRow;
-                const productFallback = {
-                    A: cloneCell(getCell(worksheet, 'A', productStyleRow)),
-                    B: cloneCell(getCell(worksheet, 'B', productStyleRow)),
-                    C: cloneCell(getCell(worksheet, 'C', productStyleRow)),
-                    D: cloneCell(getCell(worksheet, 'D', productStyleRow)),
-                    E: cloneCell(getCell(worksheet, 'E', productStyleRow))
-                };
+                const startRow = 4;
 
-                const cambioFallback = {
-                    A: cloneCell(getCell(worksheet, 'A', markerRow)),
-                    B: cloneCell(getCell(worksheet, 'B', markerRow)),
-                    C: cloneCell(getCell(worksheet, 'C', markerRow)),
-                    D: cloneCell(getCell(worksheet, 'D', markerRow)),
-                    E: cloneCell(getCell(worksheet, 'E', markerRow))
-                };
-
+                // Limpiar filas existentes (sin perder estilos)
                 for (let row = startRow; row <= markerRow; row++) {
-                    ['A', 'B', 'C', 'D', 'E'].forEach((col) => {
-                        const fallback = col === 'A' && row === markerRow ? cambioFallback[col] : productFallback[col];
-                        setStyledValue(worksheet, col, row, '', 's', fallback);
+                    const rowObj = worksheet.getRow(row);
+                    rowObj.eachCell({ includeEmpty: true }, (cell) => {
+                        // Mantener todos los estilos, solo limpiar valor
+                        cell.value = '';
                     });
                 }
 
+                // Obtener estilos de las primeras filas de plantilla
+                const templateRow = worksheet.getRow(startRow);
+                const cambioRow = worksheet.getRow(markerRow);
+
+                // Insertar productos
                 products.forEach((p, index) => {
                     const currentRow = startRow + index;
+                    const row = worksheet.getRow(currentRow);
+                    
                     const cupMay = roundToNext5(p.usdMay * rate);
                     const cupMin = roundToNext5(p.usdMin * rate);
 
-                    setStyledValue(worksheet, 'A', currentRow, p.name, 's', productFallback.A);
-                    setStyledValue(worksheet, 'B', currentRow, p.usdMay, 'n', productFallback.B);
-                    setStyledValue(worksheet, 'C', currentRow, cupMay, 'n', productFallback.C);
-                    setStyledValue(worksheet, 'D', currentRow, cupMin, 'n', productFallback.D);
-                    setStyledValue(worksheet, 'E', currentRow, '', 's', productFallback.E);
+                    // Copiar estilos de la fila de plantilla y actualizar valores
+                    row.getCell(1).value = p.name;
+                    row.getCell(2).value = p.usdMay;
+                    row.getCell(3).value = cupMay;
+                    row.getCell(4).value = cupMin;
+                    row.getCell(5).value = '';
+
+                    // Hacer que la fila herede el formato de la fila de plantilla
+                    if (templateRow) {
+                        for (let col = 1; col <= 5; col++) {
+                            const templateCell = templateRow.getCell(col);
+                            const currentCell = row.getCell(col);
+                            
+                            // Copiar estilos exactamente
+                            if (templateCell.fill) currentCell.fill = { ...templateCell.fill };
+                            if (templateCell.font) currentCell.font = { ...templateCell.font };
+                            if (templateCell.border) currentCell.border = JSON.parse(JSON.stringify(templateCell.border));
+                            if (templateCell.alignment) currentCell.alignment = { ...templateCell.alignment };
+                            if (templateCell.numFmt) currentCell.numFmt = templateCell.numFmt;
+                            if (templateCell.protection) currentCell.protection = { ...templateCell.protection };
+                        }
+                        
+                        // Copiar altura de fila
+                        row.height = templateRow.height;
+                    }
                 });
 
-                const cambioRow = startRow + products.length;
-                setStyledValue(worksheet, 'A', cambioRow, 'CAMBIO', 's', cambioFallback.A || productFallback.A);
-                setStyledValue(worksheet, 'B', cambioRow, rate, 'n', cambioFallback.B || productFallback.B);
-                setStyledValue(worksheet, 'C', cambioRow, '', 's', cambioFallback.C || productFallback.C);
-                setStyledValue(worksheet, 'D', cambioRow, '', 's', cambioFallback.D || productFallback.D);
-                setStyledValue(worksheet, 'E', cambioRow, '', 's', cambioFallback.E || productFallback.E);
+                // Insertar fila CAMBIO
+                const cambioDataRow = startRow + products.length;
+                const rowCambio = worksheet.getRow(cambioDataRow);
+                
+                rowCambio.getCell(1).value = 'CAMBIO';
+                rowCambio.getCell(2).value = rate;
+                rowCambio.getCell(3).value = '';
+                rowCambio.getCell(4).value = '';
+                rowCambio.getCell(5).value = '';
 
-                if (worksheet['!ref']) {
-                    const range = XLSX.utils.decode_range(worksheet['!ref']);
-                    range.e.r = Math.max(range.e.r, cambioRow - 1);
-                    worksheet['!ref'] = XLSX.utils.encode_range(range);
+                // Copiar estilos de la fila CAMBIO
+                if (cambioRow) {
+                    for (let col = 1; col <= 5; col++) {
+                        const templateCell = cambioRow.getCell(col);
+                        const currentCell = rowCambio.getCell(col);
+                        
+                        if (templateCell.fill) currentCell.fill = { ...templateCell.fill };
+                        if (templateCell.font) currentCell.font = { ...templateCell.font };
+                        if (templateCell.border) currentCell.border = JSON.parse(JSON.stringify(templateCell.border));
+                        if (templateCell.alignment) currentCell.alignment = { ...templateCell.alignment };
+                        if (templateCell.numFmt) currentCell.numFmt = templateCell.numFmt;
+                        if (templateCell.protection) currentCell.protection = { ...templateCell.protection };
+                    }
+                    
+                    rowCambio.height = cambioRow.height;
                 }
 
+                // Limpiar filas vacías después de CAMBIO para que no queden datos extras
+                for (let row = cambioDataRow + 1; row <= markerRow; row++) {
+                    const rowObj = worksheet.getRow(row);
+                    rowObj.eachCell({ includeEmpty: true }, (cell) => {
+                        cell.value = '';
+                    });
+                }
+
+                // Generar nombre del archivo con fecha
                 const formattedDate = today.toLocaleDateString('es-ES').replace(/\//g, '-');
-                XLSX.writeFile(workbook, `Precios Productos Luna - ${formattedDate}.xlsx`);
+                
+                // Descargar archivo
+                await workbook.xlsx.writeFile(`Precios Productos Luna - ${formattedDate}.xlsx`);
+                
             } catch (error) {
                 console.error('Error al exportar Excel:', error);
-                alert('Error al exportar Excel. En modo offline (file://) debes seleccionar Libro1.xlsx manualmente.');
+                alert('Error: ' + error.message + '\n\nAsegúrate de que Libro1.xlsx está en la carpeta del proyecto y contiene una fila con "CAMBIO".');
             }
         }
 
