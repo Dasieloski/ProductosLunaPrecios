@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestor de Precios Luna</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #1a1a2e; }
+        .neo-brutalism {
+            border: 4px solid black;
+            box-shadow: 8px 8px 0px 0px rgba(0,0,0,1);
+            transition: all 0.2s ease;
+        }
+        .neo-brutalism:active {
+            box-shadow: 0px 0px 0px 0px rgba(0,0,0,1);
+            transform: translate(4px, 4px);
+        }
+        .luna-grid {
+            background-image: radial-gradient(#ffffff22 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+        #editModal {
+            display: none;
+        }
+        #editModal.active {
+            display: flex;
+        }
+    </style>
+</head>
+<body class="luna-grid min-h-screen p-4 md:p-8">
+    <!-- Modal de Edición -->
+    <div id="editModal" class="fixed inset-0 z-50 items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-white border-4 border-black p-6 neo-brutalism w-full max-w-md">
+            <h2 class="text-2xl font-black uppercase mb-6 border-b-4 border-black pb-2 italic">Editar Producto</h2>
+            <div class="space-y-4">
+                <input type="hidden" id="editIndex">
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">Nombre</label>
+                    <input type="text" id="editName" class="w-full border-4 border-black p-3 font-bold outline-none focus:bg-yellow-50">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-indigo-50 p-3 border-2 border-black">
+                        <label class="block text-[10px] font-black uppercase mb-1">USD Mayorista</label>
+                        <input type="number" id="editUsdMay" step="0.01" class="w-full border-2 border-black p-1 font-bold">
+                    </div>
+                    <div class="bg-yellow-50 p-3 border-2 border-black">
+                        <label class="block text-[10px] font-black uppercase mb-1">USD Minorista</label>
+                        <input type="number" id="editUsdMin" step="0.01" class="w-full border-2 border-black p-1 font-bold">
+                    </div>
+                </div>
+                <div class="flex gap-4 pt-2">
+                    <button onclick="closeEditModal()" class="flex-1 bg-gray-200 border-4 border-black p-3 font-black uppercase neo-brutalism">Cancelar</button>
+                    <button onclick="saveEdit()" class="flex-1 bg-indigo-400 text-white border-4 border-black p-3 font-black uppercase neo-brutalism">Guardar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="app" class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-12">
+            <div>
+                <h1 class="text-6xl md:text-8xl font-black text-white uppercase leading-none" style="text-shadow: 6px 6px 0 #000;">
+                    PRECIOS<br><span class="text-yellow-400">LUNA</span>
+                </h1>
+                <div class="mt-4 bg-white border-4 border-black px-4 py-2 inline-block font-bold italic neo-brutalism text-sm md:text-base">
+                    SISTEMA DE INVENTARIO RESPONSIVE
+                </div>
+            </div>
+
+            <div class="bg-white p-6 border-4 border-black neo-brutalism w-full lg:w-auto">
+                <label class="block text-xs font-black mb-1 uppercase tracking-tighter">Tasa de Cambio (USD → CUP)</label>
+                <div class="flex items-center gap-2">
+                    <span class="text-2xl font-black">1$ =</span>
+                    <input type="number" id="exchangeRate" value="300" class="border-4 border-black p-2 text-2xl font-black w-24 outline-none focus:bg-yellow-50" onchange="updateView()" oninput="updateView()">
+                    <span class="text-2xl font-black italic underline">CUP</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <!-- Formulario -->
+            <aside class="lg:col-span-4">
+                <div class="bg-white border-4 border-black p-6 neo-brutalism sticky top-4">
+                    <h2 class="text-2xl font-black uppercase mb-6 border-b-4 border-black pb-2 italic">Añadir Producto</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-black uppercase mb-1">Nombre</label>
+                            <input type="text" id="pName" placeholder="EJ: CIGARROS" class="w-full border-4 border-black p-3 font-bold outline-none focus:bg-yellow-50">
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-indigo-50 p-3 border-2 border-black">
+                                <label class="block text-[10px] font-black uppercase mb-1">USD Mayorista</label>
+                                <input type="number" id="pUsdMay" step="0.01" value="0.00" class="w-full border-2 border-black p-1 font-bold">
+                            </div>
+                            <div class="bg-yellow-50 p-3 border-2 border-black">
+                                <label class="block text-[10px] font-black uppercase mb-1">USD Minorista</label>
+                                <input type="number" id="pUsdMin" step="0.01" value="0.00" class="w-full border-2 border-black p-1 font-bold">
+                            </div>
+                        </div>
+                        <button onclick="addProduct()" class="w-full bg-yellow-400 border-4 border-black p-4 text-xl font-black uppercase neo-brutalism">
+                            GUARDAR →
+                        </button>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Lista -->
+            <main class="lg:col-span-8">
+                <div class="bg-white border-4 border-black neo-brutalism overflow-hidden">
+                    <div class="p-4 bg-black text-white flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <h2 class="text-xl font-black uppercase tracking-widest">LISTADO DE PRODUCTOS</h2>
+                        <div class="flex gap-2 flex-wrap justify-center">
+                            <button onclick="exportExcel()" class="bg-green-400 text-black border-2 border-white px-4 py-2 text-xs font-black uppercase hover:bg-white transition-all shadow-[4px_4px_0px_white] active:shadow-none">
+                                EXCEL
+                            </button>
+                            <button onclick="exportImage()" class="bg-orange-400 text-black border-2 border-white px-4 py-2 text-xs font-black uppercase hover:bg-white transition-all shadow-[4px_4px_0px_white] active:shadow-none">
+                                IMAGEN
+                            </button>
+                            <button onclick="exportBackup()" class="bg-blue-400 text-black border-2 border-white px-4 py-2 text-xs font-black uppercase hover:bg-white transition-all shadow-[4px_4px_0px_white] active:shadow-none">
+                                BACKUP
+                            </button>
+                            <label class="bg-purple-400 text-black border-2 border-white px-4 py-2 text-xs font-black uppercase hover:bg-white transition-all shadow-[4px_4px_0px_white] cursor-pointer">
+                                RESTAURAR
+                                <input type="file" id="importBackup" accept=".json" onchange="importBackup(event)" class="hidden">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
+                            <thead>
+                                <tr class="bg-gray-100 border-b-4 border-black">
+                                    <th class="p-4 text-left font-black border-r-4 border-black min-w-[150px]">PRODUCTO</th>
+                                    <th class="p-4 text-left font-black border-r-4 border-black">USD</th>
+                                    <th class="p-4 text-left font-black border-r-4 border-black bg-indigo-50">CUP (MAY)</th>
+                                    <th class="p-4 text-left font-black border-r-4 border-black bg-yellow-50">CUP (MIN)</th>
+                                    <th class="p-4 text-center font-black">ACCIONES</th>
+                                </tr>
+                            </thead>
+                            <tbody id="productTable">
+                                <!-- Filas dinámicas -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="emptyState" class="hidden p-12 text-center font-black text-xl uppercase italic text-gray-400">
+                        --- SIN PRODUCTOS ---
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        let products = [];
+        let db;
+
+        // Inicializar IndexedDB
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('LunaDB', 1);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    resolve(db);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    db = event.target.result;
+                    if (!db.objectStoreNames.contains('data')) {
+                        db.createObjectStore('data', { keyPath: 'id' });
+                    }
+                };
+            });
+        }
+
+        // Cargar datos desde IndexedDB
+        async function loadData() {
+            try {
+                await initDB();
+                const transaction = db.transaction(['data'], 'readonly');
+                const store = transaction.objectStore('data');
+                const request = store.get('lunaData');
+                
+                request.onsuccess = () => {
+                    if (request.result) {
+                        products = request.result.products || [];
+                        document.getElementById('exchangeRate').value = request.result.exchangeRate || 300;
+                    }
+                    updateView();
+                };
+                
+                request.onerror = () => {
+                    console.error('Error al cargar datos');
+                    updateView();
+                };
+            } catch (error) {
+                console.error('Error al inicializar DB:', error);
+                updateView();
+            }
+        }
+
+        // Guardar datos en IndexedDB
+        async function saveData() {
+            const rate = parseFloat(document.getElementById('exchangeRate').value) || 0;
+            try {
+                const transaction = db.transaction(['data'], 'readwrite');
+                const store = transaction.objectStore('data');
+                store.put({
+                    id: 'lunaData',
+                    products: products,
+                    exchangeRate: rate,
+                    lastUpdate: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Error al guardar datos:', error);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', loadData);
+
+        // Redondear al múltiplo de 5 más cercano
+        function roundToNext5(num) {
+            return Math.round(num / 5) * 5;
+        }
+
+        function updateView() {
+            const rate = parseFloat(document.getElementById('exchangeRate').value) || 0;
+            saveData();
+            const table = document.getElementById('productTable');
+            const emptyState = document.getElementById('emptyState');
+            
+            table.innerHTML = '';
+            
+            if (products.length === 0) {
+                emptyState.classList.remove('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+            }
+
+            products.forEach((p, index) => {
+                const cupMay = roundToNext5(p.usdMay * rate);
+                const cupMin = roundToNext5(p.usdMin * rate);
+                
+                const row = `
+                    <tr class="border-b-2 border-black hover:bg-slate-50 transition-colors">
+                        <td class="p-4 font-black border-r-4 border-black">${p.name}</td>
+                        <td class="p-4 font-bold border-r-4 border-black text-xs text-gray-500">
+                            M: ${p.usdMay.toFixed(2)}<br>
+                            m: ${p.usdMin.toFixed(2)}
+                        </td>
+                        <td class="p-4 font-black text-lg border-r-4 border-black bg-indigo-50/30">${cupMay.toLocaleString('es-ES')}</td>
+                        <td class="p-4 font-black text-lg border-r-4 border-black bg-yellow-50/30">${cupMin.toLocaleString('es-ES')}</td>
+                        <td class="p-4">
+                            <div class="flex flex-col gap-2">
+                                <button onclick="openEditModal(${index})" class="bg-indigo-400 text-white p-2 border-2 border-black text-[10px] font-black uppercase neo-brutalism">EDITAR</button>
+                                <button onclick="deleteProduct(${index})" class="bg-red-500 text-white p-2 border-2 border-black text-[10px] font-black uppercase neo-brutalism">ELIMINAR</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                table.innerHTML += row;
+            });
+        }
+
+        function addProduct() {
+            const name = document.getElementById('pName').value.toUpperCase();
+            const usdMay = parseFloat(document.getElementById('pUsdMay').value) || 0;
+            const usdMin = parseFloat(document.getElementById('pUsdMin').value) || 0;
+
+            if (!name) return alert("Por favor, introduce el nombre del producto.");
+
+            products.push({ name, usdMay, usdMin });
+            document.getElementById('pName').value = '';
+            document.getElementById('pUsdMay').value = '0.00';
+            document.getElementById('pUsdMin').value = '0.00';
+            updateView();
+        }
+
+        function openEditModal(index) {
+            const product = products[index];
+            document.getElementById('editIndex').value = index;
+            document.getElementById('editName').value = product.name;
+            document.getElementById('editUsdMay').value = product.usdMay;
+            document.getElementById('editUsdMin').value = product.usdMin;
+            document.getElementById('editModal').classList.add('active');
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').classList.remove('active');
+        }
+
+        function saveEdit() {
+            const index = document.getElementById('editIndex').value;
+            const name = document.getElementById('editName').value.toUpperCase();
+            const usdMay = parseFloat(document.getElementById('editUsdMay').value) || 0;
+            const usdMin = parseFloat(document.getElementById('editUsdMin').value) || 0;
+
+            if (!name) return alert("El nombre no puede estar vacío");
+
+            products[index] = { name, usdMay, usdMin };
+            closeEditModal();
+            updateView();
+        }
+
+        function deleteProduct(index) {
+            if (confirm("¿Seguro que quieres eliminar este producto?")) {
+                products.splice(index, 1);
+                updateView();
+            }
+        }
+
+      async function exportExcel() {
+            if (products.length === 0) {
+                alert("No hay productos para exportar.");
+                return;
+            }
+
+            const rate = parseFloat(document.getElementById('exchangeRate').value) || 0;
+
+            // Crear input para seleccionar Libro1.xlsx
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.xlsx';
+            input.style.display = 'none';
+
+            input.onchange = async function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellStyles: true });
+                    
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+                    // Actualizar la fecha en A1
+                    const today = new Date();
+                    const excelDate = Math.floor((today - new Date(1899, 11, 30)) / (24 * 60 * 60 * 1000));
+                    if (worksheet['A1']) {
+                        worksheet['A1'].v = excelDate;
+                        worksheet['A1'].t = 'n';
+                    }
+
+                    // Limpiar productos anteriores (desde fila 4 en adelante hasta antes de CAMBIO/TOQUE)
+                    let row = 4;
+                    while (worksheet[`A${row}`] && worksheet[`A${row}`].v !== 'CAMBIO' && worksheet[`A${row}`].v !== 'TOQUE') {
+                        ['A', 'B', 'C', 'D', 'E'].forEach(col => {
+                            delete worksheet[`${col}${row}`];
+                        });
+                        row++;
+                    }
+
+                    // Agregar productos desde la fila 4
+                    let startRow = 4;
+                    products.forEach((p, index) => {
+                        const currentRow = startRow + index;
+                        const cupMay = roundToNext5(p.usdMay * rate);
+                        const cupMin = roundToNext5(p.usdMin * rate);
+
+                        // Nombre del producto
+                        worksheet[`A${currentRow}`] = { v: p.name, t: 's' };
+                        
+                        // Precio USD
+                        worksheet[`B${currentRow}`] = { v: p.usdMay, t: 'n' };
+                        
+                        // Precio CUP Mayorista
+                        if (cupMay) {
+                            worksheet[`C${currentRow}`] = { v: cupMay, t: 'n' };
+                        }
+                        
+                        // Precio CUP Minorista
+                        if (cupMin) {
+                            worksheet[`D${currentRow}`] = { v: cupMin, t: 'n' };
+                        }
+                        
+                        // Columna E vacía
+                        worksheet[`E${currentRow}`] = { v: '', t: 's' };
+                    });
+
+                    // Actualizar la fila CAMBIO
+                    const cambioRow = startRow + products.length;
+                    worksheet[`A${cambioRow}`] = { v: 'CAMBIO', t: 's' };
+                    worksheet[`B${cambioRow}`] = { v: rate, t: 'n' };
+                    worksheet[`C${cambioRow}`] = { v: '', t: 's' };
+                    worksheet[`D${cambioRow}`] = { v: '', t: 's' };
+                    worksheet[`E${cambioRow}`] = { v: '', t: 's' };
+
+                    // Actualizar el rango de la hoja
+                    const range = XLSX.utils.decode_range(worksheet['!ref']);
+                    range.e.r = cambioRow;
+                    worksheet['!ref'] = XLSX.utils.encode_range(range);
+
+                    // Guardar el archivo
+                    const formattedDate = today.toLocaleDateString('es-ES').replace(/\//g, "-");
+                    XLSX.writeFile(workbook, `Precios Productos Luna - ${formattedDate}.xlsx`);
+                    
+                } catch (error) {
+                    console.error('Error al exportar Excel:', error);
+                    alert('Error al exportar Excel. Verifica que el archivo sea Libro1.xlsx');
+                }
+                
+                // Limpiar el input
+                document.body.removeChild(input);
+            };
+
+            document.body.appendChild(input);
+            input.click();
+        }
+
+        // Exportar tabla como imagen PNG
+        async function exportImage() {
+            if (products.length === 0) return alert("No hay productos para exportar.");
+            
+            const rate = parseFloat(document.getElementById('exchangeRate').value) || 0;
+            const date = new Date().toLocaleDateString('es-ES');
+            
+            // Crear tabla temporal con formato Excel idéntico a la imagen
+            const tempDiv = document.createElement('div');
+            tempDiv.style.position = 'absolute';
+            tempDiv.style.left = '-9999px';
+            tempDiv.style.background = 'white';
+            tempDiv.style.padding = '0';
+            tempDiv.style.fontFamily = 'Arial, sans-serif';
+            
+            let tableHTML = `
+                <table style="border-collapse: collapse; width: 700px; background: white; font-size: 18px;">
+                    <tr>
+                        <td colspan="4" style="background: #4472C4; color: white; padding: 30px; font-weight: bold; font-size: 60px; text-align: center; border: 2px solid black;">
+                            ${date}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td rowspan="2" style="background: white; padding: 15px; font-weight: bold; font-size: 22px; text-align: center; border: 2px solid black;">PRODUCTO</td>
+                        <td rowspan="2" style="background: white; padding: 15px; font-weight: bold; font-size: 22px; text-align: center; border: 2px solid black;">USD</td>
+                        <td colspan="2" style="background: white; padding: 15px; font-weight: bold; font-size: 22px; text-align: center; border: 2px solid black;">CUP</td>
+                    </tr>
+                    <tr>
+                        <td style="background: white; padding: 15px; font-weight: bold; font-size: 22px; text-align: center; border: 2px solid black;">Mayorista</td>
+                        <td style="background: white; padding: 15px; font-weight: bold; font-size: 22px; text-align: center; border: 2px solid black;">Minorista</td>
+                    </tr>
+            `;
+            
+            products.forEach(p => {
+                const cupMay = roundToNext5(p.usdMay * rate);
+                const cupMin = roundToNext5(p.usdMin * rate);
+                tableHTML += `
+                    <tr>
+                        <td style="padding: 12px; border: 2px solid black; font-size: 18px; background: white;">${p.name}</td>
+                        <td style="padding: 12px; border: 2px solid black; text-align: center; font-size: 18px; background: white;">${p.usdMay}</td>
+                        <td style="padding: 12px; border: 2px solid black; text-align: center; font-size: 18px; background: white;">${cupMay || ''}</td>
+                        <td style="padding: 12px; border: 2px solid black; text-align: center; font-size: 18px; background: white;">${cupMin || ''}</td>
+                    </tr>
+                `;
+            });
+            
+            tableHTML += `
+                    <tr>
+                        <td colspan="2" style="background: #4472C4; color: white; padding: 20px; font-weight: bold; font-size: 32px; text-align: center; border: 2px solid black;">CAMBIO</td>
+                        <td colspan="2" style="background: #4472C4; color: white; padding: 20px; font-weight: bold; font-size: 32px; text-align: center; border: 2px solid black;">${rate}</td>
+                    </tr>
+                </table>
+            `;
+            
+            tempDiv.innerHTML = tableHTML;
+            document.body.appendChild(tempDiv);
+            
+            try {
+                const canvas = await html2canvas(tempDiv.querySelector('table'), {
+                    backgroundColor: '#ffffff',
+                    scale: 3
+                });
+                
+                canvas.toBlob((blob) => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Precios_Luna_${new Date().toISOString().split('T')[0]}.png`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    document.body.removeChild(tempDiv);
+                });
+            } catch (error) {
+                console.error('Error al generar imagen:', error);
+                alert('Error al generar la imagen');
+                document.body.removeChild(tempDiv);
+            }
+        }
+
+        // Exportar backup JSON
+        function exportBackup() {
+            const rate = parseFloat(document.getElementById('exchangeRate').value) || 0;
+            const backup = {
+                products: products,
+                exchangeRate: rate,
+                exportDate: new Date().toISOString(),
+                version: '1.0'
+            };
+            
+            const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Luna_Backup_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Importar backup JSON
+        function importBackup(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const backup = JSON.parse(e.target.result);
+                    if (confirm(`¿Restaurar backup del ${new Date(backup.exportDate).toLocaleDateString()}?\n\nEsto reemplazará todos los datos actuales.`)) {
+                        products = backup.products || [];
+                        document.getElementById('exchangeRate').value = backup.exchangeRate || 300;
+                        saveData();
+                        updateView();
+                        alert('Backup restaurado exitosamente');
+                    }
+                } catch (error) {
+                    alert('Error al leer el archivo de backup');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+</script>
+
+</body>
+</html>
