@@ -323,94 +323,153 @@
 
             const rate = parseFloat(document.getElementById('exchangeRate').value) || 0;
 
-            // Crear input para seleccionar Libro1.xlsx
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.xlsx';
-            input.style.display = 'none';
-
-            input.onchange = async function(e) {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                try {
-                    const arrayBuffer = await file.arrayBuffer();
-                    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellStyles: true });
-                    
-                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-
-                    // Actualizar la fecha en A1
-                    const today = new Date();
-                    const excelDate = Math.floor((today - new Date(1899, 11, 30)) / (24 * 60 * 60 * 1000));
-                    if (worksheet['A1']) {
-                        worksheet['A1'].v = excelDate;
-                        worksheet['A1'].t = 'n';
-                    }
-
-                    // Limpiar productos anteriores (desde fila 4 en adelante hasta antes de CAMBIO/TOQUE)
-                    let row = 4;
-                    while (worksheet[`A${row}`] && worksheet[`A${row}`].v !== 'CAMBIO' && worksheet[`A${row}`].v !== 'TOQUE') {
-                        ['A', 'B', 'C', 'D', 'E'].forEach(col => {
-                            delete worksheet[`${col}${row}`];
-                        });
-                        row++;
-                    }
-
-                    // Agregar productos desde la fila 4
-                    let startRow = 4;
-                    products.forEach((p, index) => {
-                        const currentRow = startRow + index;
-                        const cupMay = roundToNext5(p.usdMay * rate);
-                        const cupMin = roundToNext5(p.usdMin * rate);
-
-                        // Nombre del producto
-                        worksheet[`A${currentRow}`] = { v: p.name, t: 's' };
-                        
-                        // Precio USD
-                        worksheet[`B${currentRow}`] = { v: p.usdMay, t: 'n' };
-                        
-                        // Precio CUP Mayorista
-                        if (cupMay) {
-                            worksheet[`C${currentRow}`] = { v: cupMay, t: 'n' };
-                        }
-                        
-                        // Precio CUP Minorista
-                        if (cupMin) {
-                            worksheet[`D${currentRow}`] = { v: cupMin, t: 'n' };
-                        }
-                        
-                        // Columna E vacía
-                        worksheet[`E${currentRow}`] = { v: '', t: 's' };
-                    });
-
-                    // Actualizar la fila CAMBIO
-                    const cambioRow = startRow + products.length;
-                    worksheet[`A${cambioRow}`] = { v: 'CAMBIO', t: 's' };
-                    worksheet[`B${cambioRow}`] = { v: rate, t: 'n' };
-                    worksheet[`C${cambioRow}`] = { v: '', t: 's' };
-                    worksheet[`D${cambioRow}`] = { v: '', t: 's' };
-                    worksheet[`E${cambioRow}`] = { v: '', t: 's' };
-
-                    // Actualizar el rango de la hoja
-                    const range = XLSX.utils.decode_range(worksheet['!ref']);
-                    range.e.r = cambioRow;
-                    worksheet['!ref'] = XLSX.utils.encode_range(range);
-
-                    // Guardar el archivo
-                    const formattedDate = today.toLocaleDateString('es-ES').replace(/\//g, "-");
-                    XLSX.writeFile(workbook, `Precios Productos Luna - ${formattedDate}.xlsx`);
-                    
-                } catch (error) {
-                    console.error('Error al exportar Excel:', error);
-                    alert('Error al exportar Excel. Verifica que el archivo sea Libro1.xlsx');
-                }
-                
-                // Limpiar el input
-                document.body.removeChild(input);
+            const cloneCell = (cell) => (cell ? JSON.parse(JSON.stringify(cell)) : null);
+            const getCell = (sheet, col, row) => sheet[`${col}${row}`];
+            const setStyledValue = (sheet, col, row, value, type, fallbackCell) => {
+                const address = `${col}${row}`;
+                const base = cloneCell(sheet[address]) || cloneCell(fallbackCell) || { t: type };
+                base.v = value;
+                base.t = type;
+                delete base.w;
+                sheet[address] = base;
             };
 
-            document.body.appendChild(input);
-            input.click();
+            const loadTemplateArrayBuffer = async () => {
+                if (window.location.protocol !== 'file:') {
+                    try {
+                        const response = await fetch('./Libro1.xlsx');
+                        if (response.ok) {
+                            return await response.arrayBuffer();
+                        }
+                    } catch (error) {
+                        console.warn('No se pudo cargar automáticamente Libro1.xlsx, se solicitará seleccionar la plantilla.', error);
+                    }
+                }
+
+                if (window.showOpenFilePicker) {
+                    const [fileHandle] = await window.showOpenFilePicker({
+                        multiple: false,
+                        types: [{
+                            description: 'Plantilla Excel',
+                            accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+                        }],
+                        excludeAcceptAllOption: false
+                    });
+                    const file = await fileHandle.getFile();
+                    return await file.arrayBuffer();
+                }
+
+                return await new Promise((resolve, reject) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.xlsx';
+                    input.style.display = 'none';
+
+                    input.onchange = async (event) => {
+                        const file = event.target.files?.[0];
+                        document.body.removeChild(input);
+                        if (!file) {
+                            reject(new Error('No se seleccionó una plantilla XLSX'));
+                            return;
+                        }
+                        resolve(await file.arrayBuffer());
+                    };
+
+                    input.onerror = () => {
+                        document.body.removeChild(input);
+                        reject(new Error('No se pudo abrir el selector de archivos'));
+                    };
+
+                    document.body.appendChild(input);
+                    input.click();
+                });
+            };
+
+            try {
+                const arrayBuffer = await loadTemplateArrayBuffer();
+                const workbook = XLSX.read(arrayBuffer, { type: 'array', cellStyles: true, cellNF: true });
+                const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+                const today = new Date();
+                const excelDate = Math.floor((today - new Date(1899, 11, 30)) / (24 * 60 * 60 * 1000));
+
+                if (worksheet['A1']) {
+                    worksheet['A1'].v = excelDate;
+                    worksheet['A1'].t = 'n';
+                    delete worksheet['A1'].w;
+                }
+
+                const startRow = 4;
+                let markerRow = startRow;
+                const maxSearchRows = 5000;
+
+                while (markerRow < maxSearchRows) {
+                    const markerValue = getCell(worksheet, 'A', markerRow)?.v;
+                    if (markerValue === 'CAMBIO' || markerValue === 'TOQUE') {
+                        break;
+                    }
+                    markerRow++;
+                }
+
+                if (markerRow === maxSearchRows) {
+                    throw new Error('No se encontró la fila CAMBIO/TOQUE en la plantilla');
+                }
+
+                const productStyleRow = startRow;
+                const productFallback = {
+                    A: cloneCell(getCell(worksheet, 'A', productStyleRow)),
+                    B: cloneCell(getCell(worksheet, 'B', productStyleRow)),
+                    C: cloneCell(getCell(worksheet, 'C', productStyleRow)),
+                    D: cloneCell(getCell(worksheet, 'D', productStyleRow)),
+                    E: cloneCell(getCell(worksheet, 'E', productStyleRow))
+                };
+
+                const cambioFallback = {
+                    A: cloneCell(getCell(worksheet, 'A', markerRow)),
+                    B: cloneCell(getCell(worksheet, 'B', markerRow)),
+                    C: cloneCell(getCell(worksheet, 'C', markerRow)),
+                    D: cloneCell(getCell(worksheet, 'D', markerRow)),
+                    E: cloneCell(getCell(worksheet, 'E', markerRow))
+                };
+
+                for (let row = startRow; row <= markerRow; row++) {
+                    ['A', 'B', 'C', 'D', 'E'].forEach((col) => {
+                        const fallback = col === 'A' && row === markerRow ? cambioFallback[col] : productFallback[col];
+                        setStyledValue(worksheet, col, row, '', 's', fallback);
+                    });
+                }
+
+                products.forEach((p, index) => {
+                    const currentRow = startRow + index;
+                    const cupMay = roundToNext5(p.usdMay * rate);
+                    const cupMin = roundToNext5(p.usdMin * rate);
+
+                    setStyledValue(worksheet, 'A', currentRow, p.name, 's', productFallback.A);
+                    setStyledValue(worksheet, 'B', currentRow, p.usdMay, 'n', productFallback.B);
+                    setStyledValue(worksheet, 'C', currentRow, cupMay, 'n', productFallback.C);
+                    setStyledValue(worksheet, 'D', currentRow, cupMin, 'n', productFallback.D);
+                    setStyledValue(worksheet, 'E', currentRow, '', 's', productFallback.E);
+                });
+
+                const cambioRow = startRow + products.length;
+                setStyledValue(worksheet, 'A', cambioRow, 'CAMBIO', 's', cambioFallback.A || productFallback.A);
+                setStyledValue(worksheet, 'B', cambioRow, rate, 'n', cambioFallback.B || productFallback.B);
+                setStyledValue(worksheet, 'C', cambioRow, '', 's', cambioFallback.C || productFallback.C);
+                setStyledValue(worksheet, 'D', cambioRow, '', 's', cambioFallback.D || productFallback.D);
+                setStyledValue(worksheet, 'E', cambioRow, '', 's', cambioFallback.E || productFallback.E);
+
+                if (worksheet['!ref']) {
+                    const range = XLSX.utils.decode_range(worksheet['!ref']);
+                    range.e.r = Math.max(range.e.r, cambioRow - 1);
+                    worksheet['!ref'] = XLSX.utils.encode_range(range);
+                }
+
+                const formattedDate = today.toLocaleDateString('es-ES').replace(/\//g, '-');
+                XLSX.writeFile(workbook, `Precios Productos Luna - ${formattedDate}.xlsx`);
+            } catch (error) {
+                console.error('Error al exportar Excel:', error);
+                alert('Error al exportar Excel. En modo offline (file://) debes seleccionar Libro1.xlsx manualmente.');
+            }
         }
 
         // Exportar tabla como imagen PNG
